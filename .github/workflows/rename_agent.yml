@@ -1,0 +1,43 @@
+name: Rename agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_name:
+        description: "Exact current agent_name (e.g. \"Preethy (WFH)\")"
+        required: true
+      to_name:
+        description: "Exact new agent_name (e.g. \"Aarthy (WFH)\")"
+        required: true
+
+concurrency:
+  group: db-ingest
+  cancel-in-progress: false
+
+jobs:
+  rename:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Rename agent
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          python3 rename_agent.py --from "${{ inputs.from_name }}" --to "${{ inputs.to_name }}"
+
+      # Deliberately NOT followed by a "Refresh deposit report" step -- same
+      # reasoning as reassign_agent.yml: keeps this job to ~10-30s so it
+      # doesn't hold the shared db-ingest concurrency slot long enough to
+      # collide with the hourly pipeline. The rename lands on the dashboard
+      # at the next scheduled api_pull.yml run.

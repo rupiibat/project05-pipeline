@@ -1,0 +1,7 @@
+name = "project05-performance-dashboard"
+main = "src/index.js"
+compatibility_date = "2025-01-01"
+
+[[r2_buckets]]
+binding = "USERLIST_BUCKET"
+bucket_name = "project05-db"

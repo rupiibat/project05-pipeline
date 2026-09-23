@@ -1,0 +1,48 @@
+name: Create agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      agent_name:
+        description: "New agent name to add (e.g. \"Priya (WFH)\")"
+        required: true
+
+concurrency:
+  group: db-ingest
+  cancel-in-progress: false
+
+jobs:
+  create:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Create agent
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          python3 create_agent.py --agent-name "${{ inputs.agent_name }}"
+
+      # Unlike reassign_agent.yml, this DOES refresh the report synchronously
+      # (same pattern as ban_user.yml) -- creating a new agent is rare, and
+      # the whole point is for it to show up in the Reassign Agent dropdown
+      # (which reads agent_list.json) right away, not "within the hour."
+      - name: Refresh deposit report
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          python3 build_deposit_report.py

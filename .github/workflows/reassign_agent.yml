@@ -1,0 +1,64 @@
+name: Reassign agent
+
+on:
+  workflow_dispatch:
+    inputs:
+      user_ids:
+        description: "Comma-separated User ID(s) to reassign"
+        required: true
+      agent:
+        description: "Agent name, or empty to un-assign"
+        required: false
+        default: ""
+
+# Deliberately its OWN concurrency group, NOT the hourly pipeline's shared
+# "db-ingest" group. That group is held by api_pull.yml for the pipeline's
+# full 15-20+ minute run, so any reassign dispatched during that window
+# used to queue as "pending" and wait out the whole run before even
+# starting -- and if a second reassign (or the next hourly cron tick) came
+# in while one was already queued pending, GitHub's one-pending-run-per-
+# group limit would silently CANCEL it, so it looked like the
+# reassignment had failed even though the dashboard had already said
+# "Saved". A dedicated group here still fully serializes reassigns
+# against EACH OTHER (so two reassigns can't clobber each other's write to
+# the same master_userlist.db file), but no longer forces them to wait
+# behind the heavy pipeline -- each reassign job is ~10-30s, so even a
+# pile-up of a few queues in seconds, not minutes. This is only safe
+# because reassign_agent.py and the pipeline's own two master_userlist.db
+# writers (api_pull_ingest.py, build_deposit_report.py) now each refresh
+# the agent_assignments table from R2 immediately before their own
+# upload, so neither side can silently revert the other's write anymore
+# -- see ci_ingest.refresh_table_from_r2 and reassign_agent.py's own
+# re-fetch-before-upload step.
+concurrency:
+  group: reassign-agent
+  cancel-in-progress: false
+
+jobs:
+  reassign:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - run: pip install -r requirements.txt
+
+      - name: Reassign agent
+        env:
+          R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ENDPOINT_URL: ${{ secrets.R2_ENDPOINT_URL }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET }}
+        run: |
+          python3 reassign_agent.py --user-ids "${{ inputs.user_ids }}" --agent "${{ inputs.agent }}"
+
+      # Deliberately NOT followed by a "Refresh deposit report" step -- the
+      # dashboard's report tables (which show the Agent column) only
+      # reflect a reassignment once the next hourly api_pull.yml run
+      # rebuilds the report, per the frontend's "within the hour" message.
+      # Triggering that 15-20+ minute rebuild synchronously here would
+      # defeat the whole point of this workflow being fast.
